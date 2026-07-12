@@ -1,7 +1,7 @@
-// src/runner.rs
-// Spawns and owns a single `cargo` child process.
-// stdout/stderr are streamed to tracing at INFO level.
-// child_jobs controls CARGO_BUILD_JOBS (rustc thread count) per invocation.
+//! Spawns and owns a single `cargo` child process.
+//!
+//! stdout/stderr stream to tracing (and optionally to an attached client).
+//! `child_jobs` maps to `CARGO_BUILD_JOBS` for that invocation.
 
 use crate::ipc::{CargoOutputStream, DaemonMsg};
 use anyhow::{Context, Result};
@@ -24,6 +24,7 @@ impl CargoRunner {
         args: &[String],
         job_id: &str,
         child_jobs: usize,
+        use_sccache: bool,
         attached_tx: Option<mpsc::UnboundedSender<DaemonMsg>>,
     ) -> Result<Self> {
         let dir = PathBuf::from(project_dir);
@@ -42,7 +43,10 @@ impl CargoRunner {
             .env("CARGO_BUILD_JOBS", &cj_str)
             .env("CARGO_TERM_COLOR", "always");
 
-        if std::env::var_os("RUSTC_WRAPPER").is_none() && command_exists_on_path("sccache") {
+        if use_sccache
+            && std::env::var_os("RUSTC_WRAPPER").is_none()
+            && command_exists_on_path("sccache")
+        {
             cmd.env("RUSTC_WRAPPER", "sccache");
             info!(job = %id, "sccache detected; enabling RUSTC_WRAPPER=sccache");
         }

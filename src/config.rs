@@ -1,9 +1,9 @@
-// src/config.rs
-// Persistent configuration for cargo-shepherd.
-// Stored as TOML in the platform-correct config directory:
-//   Windows : %APPDATA%\shepherd\config.toml
-//   macOS   : ~/Library/Application Support/shepherd/config.toml
-//   Linux   : ~/.config/shepherd/config.toml
+//! Persistent configuration for cargo-shepherd.
+//!
+//! Platform paths:
+//! - Windows: `%APPDATA%\shepherd\config.toml`
+//! - macOS: `~/Library/Application Support/shepherd/config.toml`
+//! - Linux: `~/.config/shepherd/config.toml`
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -15,7 +15,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Priority {
-    Background = 0, // only runs when all slots would otherwise be empty
+    Background = 0, // only starts when no managed/herded builds are active
     Low = 1,
     Normal = 2, // default
     High = 3,
@@ -68,6 +68,23 @@ impl std::fmt::Display for Priority {
     }
 }
 
+impl std::str::FromStr for Priority {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "background" | "bg" | "0" => Ok(Priority::Background),
+            "low" | "l" | "1" => Ok(Priority::Low),
+            "normal" | "n" | "2" => Ok(Priority::Normal),
+            "high" | "h" | "3" => Ok(Priority::High),
+            "critical" | "crit" | "c" | "4" => Ok(Priority::Critical),
+            other => Err(format!(
+                "Unknown priority '{other}'. Valid: background, low, normal, high, critical"
+            )),
+        }
+    }
+}
+
 // ─────────────────────────── Per-project settings ────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,6 +134,10 @@ pub struct GlobalConfig {
     /// Default: 2 — shepherd controls JOB concurrency; this controls THREAD concurrency per job.
     pub child_jobs: usize,
 
+    /// When true and `sccache` is on PATH, set RUSTC_WRAPPER=sccache for managed jobs.
+    #[serde(default = "default_use_sccache")]
+    pub use_sccache: bool,
+
     /// Log level passed to RUST_LOG. Default: "info"
     pub log_level: String,
 
@@ -155,6 +176,7 @@ impl Default for GlobalConfig {
             max_cpu_pct: 80.0,
             max_ram_pct: 85.0,
             child_jobs: 2,
+            use_sccache: true,
             log_level: "info".into(),
             ui_refresh_ms: 500,
             herd_unmanaged: true,
@@ -403,6 +425,10 @@ impl SaturatingSubF64 for f64 {
     fn saturating_sub_f64(self, rhs: f64) -> f64 {
         (self - rhs).max(0.0)
     }
+}
+
+fn default_use_sccache() -> bool {
+    true
 }
 
 fn default_herd_unmanaged() -> bool {

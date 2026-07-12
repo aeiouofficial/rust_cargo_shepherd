@@ -1,42 +1,67 @@
 [package]
 name = "cargo-shepherd"
-version = "1.2.0"
+version = "1.2.1"
 edition = "2021"
-description = "System-wide Cargo build coordinator — priority queue, TUI, persistent config"
+description = "System-wide Cargo build coordinator — priority queue, TUI, passive herding"
 license = "MIT"
+readme = "README.md"
+repository = "https://github.com/aeiouofficial/rust_cargo_shepherd"
 keywords = ["cargo", "rust", "build", "tui", "devtools"]
+categories = ["command-line-utilities", "development-tools"]
+rust-version = "1.75"
 
 [[bin]]
 name = "shepherd"
 path = "src/main.rs"
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Core deps (always included)
-# ──────────────────────────────────────────────────────────────────────────────
 [dependencies]
-tokio        = { version = "1",    features = ["full"] }
-serde        = { version = "1",    features = ["derive"] }
-serde_json   = "1"
-clap         = { version = "4",    features = ["derive"] }
-anyhow       = "1"
-tracing      = "0.1"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-sysinfo      = "0.30"
-uuid         = { version = "1",    features = ["v4"] }
-chrono       = { version = "0.4",  features = ["serde"] }
-colored      = "2"
-toml         = "0.8"       # config file parsing
-dirs         = "5"         # XDG / platform-correct config paths
+sysinfo = "0.30"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+colored = "2"
+toml = "0.8"
+dirs = "5"
+ratatui = "0.29"
+crossterm = { version = "0.28", features = ["event-stream"] }
+futures = "0.3"
 
 [target.'cfg(windows)'.dependencies]
-winapi       = { version = "0.3", features = ["handleapi", "libloaderapi", "processthreadsapi", "shellapi", "tlhelp32", "wincon", "winnt", "winuser"] }
-
-# ──────────────────────────────────────────────────────────────────────────────
-# TUI deps (always included — shepherd ui tui)
-# ──────────────────────────────────────────────────────────────────────────────
-ratatui      = "0.29"
-crossterm    = { version = "0.28", features = ["event-stream"] }
-futures      = "0.3"        # StreamExt for crossterm EventStream in TUI
+winapi = { version = "0.3", features = [
+    "handleapi",
+    "libloaderapi",
+    "processthreadsapi",
+    "shellapi",
+    "tlhelp32",
+    "wincon",
+    "winnt",
+    "winuser",
+] }
 
 [build-dependencies]
 winres = "0.1"
+
+# Project-wide lint policy (Clippy ≈ ESLint; rustc lints for basics).
+[lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Keep pedantic useful without drowning the codebase.
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+similar_names = "allow"
+too_many_lines = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_precision_loss = "allow"
+cast_possible_wrap = "allow"

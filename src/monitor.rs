@@ -1,6 +1,8 @@
-// src/monitor.rs
-// System resource monitor — gates new build scheduling on CPU/RAM headroom
-// and herds already-running Rust build processes launched outside Sheppard.
+//! CPU/RAM gating and passive herding of unmanaged Rust build trees.
+//!
+//! The scheduler asks this module whether it is safe to start another job.
+//! When herding is enabled we also adopt external cargo/rustc process
+//! trees, suspend them under memory pressure, and surface them in status.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

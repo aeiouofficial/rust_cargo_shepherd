@@ -1,16 +1,10 @@
-// src/daemon.rs
-// cargo-shepherd background daemon.
-//
-// Architecture change from v0.1:
-//   OLD: tokio::Semaphore (FIFO — ignores priority)
-//   NEW: dedicated scheduler loop + PriorityQueue
-//        - Scheduler wakes on Notify whenever a slot may have opened or a job was added
-//        - Picks highest-priority queued job
-//        - True priority scheduling with reprioritization support
-//
-// Cross-platform IPC:
-//   Unix:    tokio::net::UnixListener (domain socket)
-//   Windows: tokio::net::windows::named_pipe (named pipe server)
+//! Background daemon: priority scheduler, IPC server, job runners.
+//!
+//! Layout:
+//! - `SharedState` holds the queue, running map, config, and resource monitor
+//! - a scheduler loop pops the highest-priority job when slots + CPU/RAM allow
+//! - a runner pool spawns `cargo` and streams output for attached clients
+//! - platform listeners accept NDJSON messages (Unix socket / Windows pipe)
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -509,6 +503,19 @@ async fn scheduler_loop(
             .reconcile_external_herd(&managed_pids, &config, active);
 
         while s.can_start_another() {
+            // Background jobs only start when the machine has no managed or
+            // herded-active builds. Higher priorities still go first via the queue.
+            if let Some(next) = s.queue.peek() {
+                if next.priority == crate::config::Priority::Background {
+                    let busy = s.active + s.monitor.active_external_count();
+                    if busy > 0 {
+                        break;
+                    }
+                }
+            } else {
+                break;
+            }
+
             if let Some(job) = s.queue.pop_next() {
                 s.active += 1;
                 info!(
@@ -572,11 +579,17 @@ async fn runner_pool(
 
             let start = Instant::now();
 
+            let use_sccache = {
+                let s = state.lock().await;
+                s.config.use_sccache
+            };
+
             match CargoRunner::spawn(
                 &project_dir,
                 &args,
                 &job_id,
                 child_jobs,
+                use_sccache,
                 attached_tx.clone(),
             )
             .await
@@ -1206,12 +1219,23 @@ async fn cancel_queued_attached_job(
     notify: &Arc<Notify>,
     job_id: &str,
 ) {
-    let removed = {
+    // Attached clients (cargo shim) drop the socket on Ctrl+C / hangup.
+    // Cancel if still queued; if already running, signal kill so the build
+    // does not keep burning CPU after the caller is gone.
+    let mut touched = false;
+    {
         let mut s = state.lock().await;
-        s.queue.remove(job_id).is_some()
-    };
+        if s.queue.remove(job_id).is_some() {
+            touched = true;
+        } else if matches!(
+            s.request_kill_job(job_id),
+            KillJobOutcome::SignaledRunning | KillJobOutcome::AlreadyRequested
+        ) {
+            touched = true;
+        }
+    }
 
-    if removed {
+    if touched {
         notify.notify_one();
     }
 }

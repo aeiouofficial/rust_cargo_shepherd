@@ -1,34 +1,35 @@
-// src/queue.rs
-// Priority queue for cargo-shepherd.
-// Supports:
-//   - O(log P) insert (P = number of priority levels, always ≤ 5)
-//   - O(1) pop of highest-priority job
-//   - O(n) reprioritization (find by job_id, remove, reinsert at new priority)
-//   - FIFO ordering within the same priority level (earlier enqueue time wins)
+//! Priority queue for scheduled Cargo jobs.
+//!
+//! Ordering rules:
+//! - higher priority first
+//! - FIFO within the same priority (earlier `queued_at` wins)
+//!
+//! The queue is a small sorted `Vec`. With ≤5 priority levels and a human-scale
+//! job count, this is simpler and faster than a binary heap for our access
+//! patterns (prefix lookup, remove-by-id, project bulk remove).
 
 use crate::config::Priority;
 use crate::ipc::DaemonMsg;
 use chrono::{DateTime, Utc};
 use tokio::sync::mpsc;
 
-// ─────────────────────────── Job record ──────────────────────────────────────
-
+/// One waiting job, already resolved against config (alias / child_jobs).
 #[derive(Debug, Clone)]
 pub struct QueuedJob {
     pub job_id: String,
     pub project_dir: String,
-    pub alias: String, // display name, pre-resolved from config
+    pub alias: String,
     pub args: Vec<String>,
     pub priority: Priority,
     pub queued_at: DateTime<Utc>,
-    pub child_jobs: usize, // CARGO_BUILD_JOBS for this specific invocation
+    /// Per-invocation `CARGO_BUILD_JOBS`.
+    pub child_jobs: usize,
+    /// When set, the daemon streams lifecycle events back over this channel
+    /// (used by the `cargo.exe` shim / `RunAttached`).
     pub attached_tx: Option<mpsc::UnboundedSender<DaemonMsg>>,
 }
 
-// ─────────────────────────── PriorityQueue ───────────────────────────────────
-
-/// A sorted Vec where index 0 is always the next job to run.
-/// Sorted: highest priority first; within the same priority, earliest enqueue time first.
+/// Sorted queue: index 0 is always the next job to run.
 #[derive(Debug, Default)]
 pub struct PriorityQueue {
     inner: Vec<QueuedJob>,
@@ -39,19 +40,25 @@ impl PriorityQueue {
         Self { inner: Vec::new() }
     }
 
-    /// Insert a job at the correct position to maintain sort order.
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    /// Peek at the next job without removing it.
+    pub fn peek(&self) -> Option<&QueuedJob> {
+        self.inner.first()
+    }
+
+    /// Insert keeping sort order (priority desc, then enqueue time asc).
     pub fn push(&mut self, job: QueuedJob) {
         let pos = self.inner.partition_point(|existing| {
-            // existing should stay before `job` when:
-            // - existing has strictly higher priority, OR
-            // - same priority AND existing was enqueued earlier
             existing.priority > job.priority
                 || (existing.priority == job.priority && existing.queued_at <= job.queued_at)
         });
         self.inner.insert(pos, job);
     }
 
-    /// Remove and return the next job to run (highest priority, earliest enqueue).
+    /// Pop the highest-priority / earliest job.
     pub fn pop_next(&mut self) -> Option<QueuedJob> {
         if self.inner.is_empty() {
             None
@@ -60,8 +67,7 @@ impl PriorityQueue {
         }
     }
 
-    /// Change the priority of a queued job and re-sort.
-    /// Returns true if the job was found and updated.
+    /// Change priority of a queued job and re-sort. Returns false if missing.
     pub fn set_priority(&mut self, job_id: &str, new_priority: Priority) -> bool {
         if let Some(pos) = self.inner.iter().position(|j| j.job_id == job_id) {
             let mut job = self.inner.remove(pos);
@@ -73,8 +79,7 @@ impl PriorityQueue {
         }
     }
 
-    /// Remove a specific job by ID (used for user-initiated cancels).
-    /// Returns the removed job if found.
+    /// Remove one job by id (user cancel).
     pub fn remove(&mut self, job_id: &str) -> Option<QueuedJob> {
         self.inner
             .iter()
@@ -82,7 +87,7 @@ impl PriorityQueue {
             .map(|pos| self.inner.remove(pos))
     }
 
-    /// Remove all jobs belonging to a project directory.
+    /// Remove every job for a project directory.
     pub fn remove_project(&mut self, project_dir: &str) -> Vec<QueuedJob> {
         let (removed, kept): (Vec<_>, Vec<_>) = self
             .inner
@@ -97,18 +102,16 @@ impl PriorityQueue {
         self.inner.len()
     }
 
-    /// Snapshot of all queued jobs in order (for status reporting).
+    /// Ordered snapshot for status reporting.
     pub fn snapshot(&self) -> Vec<QueuedJob> {
         self.inner.clone()
     }
 
-    /// Position of a job in the queue (0 = next up), or None if not found.
+    /// Position in queue (0 = next), or None if not found.
     pub fn position_of(&self, job_id: &str) -> Option<usize> {
         self.inner.iter().position(|j| j.job_id == job_id)
     }
 }
-
-// ─────────────────────────── Tests ───────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -128,7 +131,7 @@ mod tests {
     }
 
     #[test]
-    fn test_priority_ordering() {
+    fn priority_ordering() {
         let mut q = PriorityQueue::new();
         q.push(make_job("low", Priority::Low, 0));
         q.push(make_job("high", Priority::High, 100));
@@ -142,7 +145,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fifo_within_same_priority() {
+    fn fifo_within_same_priority() {
         let mut q = PriorityQueue::new();
         q.push(make_job("first", Priority::Normal, 0));
         q.push(make_job("second", Priority::Normal, 10));
@@ -154,21 +157,18 @@ mod tests {
     }
 
     #[test]
-    fn test_reprioritize() {
+    fn reprioritize_moves_job() {
         let mut q = PriorityQueue::new();
         q.push(make_job("a", Priority::Normal, 0));
         q.push(make_job("b", Priority::Low, 10));
 
-        // b is low priority, let's bump it to critical
         assert!(q.set_priority("b", Priority::Critical));
-
-        // now b should come first
         assert_eq!(q.pop_next().unwrap().job_id, "b");
         assert_eq!(q.pop_next().unwrap().job_id, "a");
     }
 
     #[test]
-    fn test_remove_project() {
+    fn remove_project_keeps_others() {
         let mut q = PriorityQueue::new();
         let mut job_a = make_job("a", Priority::Normal, 0);
         job_a.project_dir = "/project/foo".to_string();
@@ -185,5 +185,14 @@ mod tests {
         assert_eq!(removed.len(), 2);
         assert_eq!(q.len(), 1);
         assert_eq!(q.pop_next().unwrap().job_id, "b");
+    }
+
+    #[test]
+    fn peek_shows_next_without_pop() {
+        let mut q = PriorityQueue::new();
+        q.push(make_job("bg", Priority::Background, 0));
+        q.push(make_job("hi", Priority::High, 1));
+        assert_eq!(q.peek().unwrap().job_id, "hi");
+        assert_eq!(q.len(), 2);
     }
 }

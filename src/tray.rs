@@ -1,3 +1,7 @@
+//! Windows notification-area tray icon (daemon + TUI minimize).
+//!
+//! No-ops on non-Windows targets.
+
 #[cfg(windows)]
 pub fn spawn_daemon_tray_icon() {
     if std::env::var("SHEPHERD_DAEMON_TRAY").ok().as_deref() == Some("0") {

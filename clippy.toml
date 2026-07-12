@@ -1,0 +1,6 @@
+# Clippy is the Rust equivalent of ESLint (lint rules, not formatting).
+# Apply with: cargo clippy --all-targets -- -D warnings
+
+cognitive-complexity-threshold = 40
+too-many-arguments-threshold = 8
+type-complexity-threshold = 250

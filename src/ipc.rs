@@ -1,7 +1,7 @@
-// src/ipc.rs
-// IPC protocol for cargo-shepherd.
-// Transport: newline-delimited JSON over a local socket.
-// Socket location is chosen at runtime (cross-platform).
+//! IPC protocol: newline-delimited JSON over a local transport.
+//!
+//! - Unix: domain socket (prefer `$XDG_RUNTIME_DIR`, fall back to `/tmp`)
+//! - Windows: named pipe `\\.\pipe\cargo-shepherd`
 
 use crate::config::Priority;
 use chrono::{DateTime, Utc};
@@ -9,43 +9,41 @@ use serde::{Deserialize, Serialize};
 #[cfg(unix)]
 use std::path::PathBuf;
 
-// ─────────────────────────── Socket path ─────────────────────────────────────
-
-/// Returns the platform-correct socket path (used on Unix).
-///   Unix    : /tmp/cargo-shepherd.sock
-///   Windows : %TEMP%\cargo-shepherd.sock  (used by client for Unix socket fallback)
+/// Unix domain socket path for the daemon.
+///
+/// Prefer the per-user runtime directory so multiple users (and sandboxes)
+/// do not collide on a world-writable `/tmp` socket.
 #[cfg(unix)]
 pub fn socket_path() -> PathBuf {
+    if let Ok(runtime) = std::env::var("XDG_RUNTIME_DIR") {
+        if !runtime.trim().is_empty() {
+            return PathBuf::from(runtime).join("cargo-shepherd.sock");
+        }
+    }
     PathBuf::from("/tmp/cargo-shepherd.sock")
 }
 
-/// Returns the Windows named pipe name.
-/// Used by the daemon and client on Windows.
+/// Windows named pipe name.
 #[cfg(windows)]
 pub fn pipe_name() -> String {
     r"\\.\pipe\cargo-shepherd".to_string()
 }
 
-// ─────────────────────────── Messages ────────────────────────────────────────
-
 /// Client → Daemon
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMsg {
-    // ── Build lifecycle ───────────────────────────────────────────────────────
-    /// Queue a new cargo command.
+    /// Fire-and-forget: queue a cargo command, return once accepted.
     Run {
         job_id: String,
         project_dir: String,
         args: Vec<String>,
-        /// Override priority for this specific invocation.
-        /// If None, daemon looks up the project's configured default.
+        /// Override project default priority. `None` = use config.
         priority: Option<Priority>,
     },
 
-    /// Queue a Cargo command and keep this IPC connection attached until it
-    /// finishes. Used by the `cargo.exe` shim so callers receive stdout,
-    /// stderr, and the real exit code while Sheppard owns scheduling.
+    /// Keep the connection open until the job finishes. Used by the `cargo`
+    /// shim so callers get stdout/stderr and the real exit code.
     RunAttached {
         job_id: String,
         project_dir: String,
@@ -53,53 +51,43 @@ pub enum ClientMsg {
         priority: Option<Priority>,
     },
 
-    // ── Queue manipulation ────────────────────────────────────────────────────
-    /// Change the priority of a queued (not yet running) job.
     SetJobPriority {
         job_id: String,
         new_priority: Priority,
     },
 
-    /// Cancel a queued job before it starts.
     CancelJob {
         job_id: String,
     },
 
-    /// Kill all running and queued jobs for a project directory.
     KillProject {
         project_dir: String,
     },
 
-    /// Kill a specific job by ID (running or queued).
     KillJob {
         job_id: String,
     },
 
-    // ── Config management (persisted to disk immediately) ─────────────────────
-    /// Set the default priority for a project. Saved to config.toml.
     SetProjectPriority {
         project_dir: String,
         priority: Priority,
     },
 
-    /// Set a display alias for a project. Saved to config.toml.
     SetProjectAlias {
         project_dir: String,
         alias: String,
     },
 
-    /// Change the global slot count live (also saved to config.toml).
     SetSlots {
         slots: usize,
     },
 
-    /// Set per-project child_jobs (CARGO_BUILD_JOBS). Saved to config.toml.
     SetProjectChildJobs {
         project_dir: String,
         child_jobs: usize,
     },
 
-    /// Update passive herding settings. Any None field leaves that setting unchanged.
+    /// Any `None` field leaves that setting unchanged.
     SetHerdConfig {
         herd_unmanaged: Option<bool>,
         herd_ram_pause_pct: Option<f64>,
@@ -108,14 +96,8 @@ pub enum ClientMsg {
         herd_max_active: Option<usize>,
     },
 
-    // ── Queries ───────────────────────────────────────────────────────────────
-    /// Get current status (running + queued jobs + resource stats).
     Status,
-
-    /// Get the full current config as TOML text.
     GetConfig,
-
-    // ── Daemon lifecycle ──────────────────────────────────────────────────────
     Shutdown,
 }
 
@@ -123,68 +105,56 @@ pub enum ClientMsg {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DaemonMsg {
-    /// Job was accepted and placed in the queue.
     Queued {
         job_id: String,
         position: usize,
     },
 
-    /// A queued job started running.
     Started {
         job_id: String,
         pid: u32,
     },
 
-    /// A running job finished.
     Finished {
         job_id: String,
         exit_code: i32,
         duration_ms: u64,
     },
 
-    /// One line of output from an attached Cargo process.
     CargoOutput {
         job_id: String,
         stream: CargoOutputStream,
         line: String,
     },
 
-    /// A job or set of jobs was killed or cancelled.
     Killed {
         description: String,
     },
 
-    /// Priority of a queued job was changed.
     PriorityChanged {
         job_id: String,
         new_priority: Priority,
         new_position: usize,
     },
 
-    /// Full status snapshot (response to Status query).
     StatusReport {
         report: StatusReport,
     },
 
-    /// Config TOML text (response to GetConfig).
     ConfigText {
         toml: String,
     },
 
-    /// Generic success for config mutations.
     ConfigUpdated {
         message: String,
     },
 
-    /// Unrecoverable error.
     Error {
         message: String,
     },
 
     ShuttingDown,
 }
-
-// ─────────────────────────── Status types ────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusReport {
@@ -204,7 +174,7 @@ pub struct StatusReport {
 }
 
 impl StatusReport {
-    /// Returns an empty report (used as TUI default before first fetch).
+    /// Empty report used as the TUI default before the first successful poll.
     pub fn empty() -> Self {
         Self {
             running: Vec::new(),
@@ -233,7 +203,7 @@ pub struct RunningJob {
     pub pid: u32,
     pub source: RunningJobSource,
     pub started_at: DateTime<Utc>,
-    /// Elapsed milliseconds (computed by daemon at snapshot time).
+    /// Computed by the daemon at snapshot time.
     pub elapsed_ms: u64,
 }
 
@@ -275,7 +245,7 @@ pub struct QueuedJobSnapshot {
     pub child_count: usize,
     #[serde(default)]
     pub reason: Option<String>,
-    /// Position in the queue (0 = next to run).
+    /// 0 = next to run.
     pub position: usize,
 }
 

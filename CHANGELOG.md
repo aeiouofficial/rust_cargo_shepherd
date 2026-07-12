@@ -2,6 +2,27 @@
 
 All notable cargo-shepherd changes are recorded here.
 
+## 2026-07-12 - v1.2.1 — Audit fixes, rustfmt/clippy tooling, human cleanup
+
+Audit pass on the published tree. No architecture rewrite — the daemon + queue + IPC design stays.
+
+### Fixed
+- Background priority now only starts when no managed/herded builds are active (docs previously over-promised).
+- Attached `cargo` shim disconnect / Ctrl+C now kills a running job, not only a queued one.
+- CLI `send_recv` no longer hangs forever if the daemon stalls (10s timeout). Streaming `recv` stays unbounded.
+- Unix socket prefers `$XDG_RUNTIME_DIR/cargo-shepherd.sock` over hard-coded `/tmp`.
+- sccache enablement is config-driven (`use_sccache`, default true).
+
+### Added
+- `rustfmt.toml`, `clippy.toml`, Cargo `[lints]`, `Makefile`, GitHub Actions CI, `.gitignore`.
+- `Priority: FromStr` for a single parse path.
+- `AUDIT.md` with findings and the Rust ESLint/Prettier mapping.
+
+### Changed
+- Version `1.2.0` → `1.2.1`.
+- Source headers trimmed to short module docs (less changelog-in-source noise).
+- README quality-tooling section + correct launcher paths.
+
 ## 2026-05-05 - v1.2.0 — Tray UX, Console Icon & Startup Takeover Fixes
 
 Finally fixed the tray icon on Windows. The double-click was silently failing because the message handler was truncating the event word on 64-bit Windows, and the right-click menu wasn't dispatching either. Now both work reliably—double-click restores the dashboard, right-click opens the menu.

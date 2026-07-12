@@ -72,7 +72,7 @@ The daemon runs a **true priority scheduler**: five priority levels (Background 
 | **Live slot control** | Change concurrent build count without restarting the daemon |
 | **Resource gating** | Daemon pauses scheduling if CPU or RAM headroom is low |
 | **sccache integration** | Pairs with Mozilla's compiler cache to share artifacts across projects |
-| Windows (Named Pipes), (untested on macOS/Linux (Unix Sockets) — same binary should work with some tweaking) |
+| **IPC transport** | Windows named pipes; Unix domain sockets (macOS/Linux less battle-tested) |
 
 
 <img width="1254" height="334" alt="taskbar_preview" src="https://github.com/user-attachments/assets/34e4ac6d-0812-45e6-9c8d-5b7c5075c91d" />
@@ -98,16 +98,25 @@ shepherd tui
 # 5. See all active builds from the CLI
 shepherd status
 
-if thats too complicated for whatever reason for you, you also can use the bats:
-All paths are RELATIVE — works when downloaded on any PC/drive (no hardcoded paths).
-
-Workflow for sheps:
-
-First time: double-click bin/build_shepherd.bat
-
-when download + build finished = .exe gets created (you dont start the app with it)
---> start start_shepherd.bat to launch the tui.
+# Or use the Windows helpers (paths are relative to the repo root):
+#   build_shepherd.bat  /  build_shepherd.ps1   — build release
+#   start_shepherd.bat  /  start_shepherd.ps1   — start daemon + TUI
 ```
+
+---
+
+## Code quality (Rust ESLint/Prettier stack)
+
+Rust does not use ESLint. Use this instead:
+
+| Goal | Tool |
+|------|------|
+| Format | `cargo fmt` (config: `rustfmt.toml`) |
+| Lint | `cargo clippy --all-targets -- -D warnings` (config: `clippy.toml` + Cargo `[lints]`) |
+| Tests | `cargo test` |
+| All gates | `make check` |
+
+CI runs the same gates on Ubuntu, Windows, and macOS (`.github/workflows/ci.yml`).
 
 ---
 

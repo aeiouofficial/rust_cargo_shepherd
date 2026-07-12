@@ -1,29 +1,9 @@
-// src/tui.rs
-// cargo-shepherd interactive TUI dashboard.
-//
-// Layout:
-//   ┌── header: title + resource gauges + slot counter ──────────────────────┐
-//   │   RUNNING [n/slots]        │  QUEUE [n waiting]                        │
-//   │   ● alias  cargo build     │  [CRIT] 1. alias   cargo run              │
-//   │     PID: 1234  00:23       │  [HIGH] 2. alias   cargo check            │
-//   │   ● alias  cargo check     │  [NORM] 3. alias   cargo test             │
-//   │                            │                                            │
-//   ├── status bar ──────────────────────────────────────────────────────────┤
-//   │  j/k Navigate  +/- Priority  x Kill  c Cancel  s Slots  a Alias  q Quit│
-//   └────────────────────────────────────────────────────────────────────────┘
-//
-// Keyboard bindings:
-//   j / ↓      select next item in queue
-//   k / ↑      select previous item in queue
-//   Tab        switch focus between RUNNING and QUEUE panels
-//   + / =      raise priority of selected queued job
-//   -          lower priority of selected queued job
-//   x          kill selected job (either panel)
-//   c          cancel selected queued job (if not yet running)
-//   s          open slot-count prompt
-//   a          open alias prompt for selected job's project
-//   r          force refresh now
-//   q / Esc    quit TUI (daemon keeps running)
+//! Interactive ratatui dashboard for the running daemon.
+//!
+//! Layout: header (logo + gauges) / running|queue panels / footer keybinds.
+//!
+//! Keys: j/k navigate, h/l or Tab switch panel, +/- priority, x kill, c cancel,
+//! X kill project, s slots, a alias, r refresh, ? help, q quit.
 
 use std::time::Duration;
 

@@ -1,7 +1,8 @@
-// src/main.rs
-// cargo-shepherd — system-wide Cargo build coordinator
-// v1.2.0 — fixed Windows tray, restored block ASCII wordmark, and default
-// startup takeover of already-running Rust build processes.
+//! cargo-shepherd CLI entrypoint.
+//!
+//! Subcommands talk to the background daemon over local IPC. When this
+//! binary is invoked as `cargo` (shim install), it attaches to the daemon
+//! and streams the real Cargo output/exit code.
 
 mod client;
 mod config;
@@ -704,17 +705,7 @@ fn resolve_dir(dir: Option<String>) -> Result<String> {
 }
 
 fn parse_priority(s: &str) -> Result<Priority> {
-    match s.to_lowercase().as_str() {
-        "background" | "bg" | "0" => Ok(Priority::Background),
-        "low" | "l" | "1" => Ok(Priority::Low),
-        "normal" | "n" | "2" => Ok(Priority::Normal),
-        "high" | "h" | "3" => Ok(Priority::High),
-        "critical" | "crit" | "c" | "4" => Ok(Priority::Critical),
-        other => anyhow::bail!(
-            "Unknown priority '{}'. Valid values: background, low, normal, high, critical",
-            other
-        ),
-    }
+    s.parse::<Priority>().map_err(anyhow::Error::msg)
 }
 
 fn exit_with_error(message: &str) -> ! {
